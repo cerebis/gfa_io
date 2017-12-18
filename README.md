@@ -27,8 +27,11 @@ In a piece of code, one can get a networkx.DiGraph in the following manner
 ```python
 import gfa_io
 import networkx
-
+ 
+# read in the GFA file
 gfa = gfa_io.GFA('assem.gfa', ignore_isolate_paths=True)
+# create a DiGraph()
 g = gfa.to_graph(annotate_paths=True, collections_to_str=True, include_seq=True)
+# write to GraphML format
 networkx.write_graphml(g, 'assem.graphml')
 ```

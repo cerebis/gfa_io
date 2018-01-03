@@ -294,7 +294,7 @@ class GFA(object):
             for n, p in enumerate(gfa.paths):
                 last = len(p.segment_names)
                 for m, (sid, so) in enumerate(p.segment_names):
-                    if m == last:
+                    if m == last-1:
                         # mark the last element so its easy to discern
                         g.node[sid].setdefault('paths', []).append('p{}.{}|'.format(n, m))
                     else:

@@ -418,7 +418,8 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--node-labels', default=False, action='store_true', help='Add additional label attributes to nodes')
+    parser.add_argument('--node-labels', default=False, action='store_true',
+                        help='Add additional label attributes to nodes')
     parser.add_argument('--seqs', default=False, action='store_true', help='Include sequence data')
     parser.add_argument('--paths', default=False, action='store_true', help='Annotate paths')
     parser.add_argument('--ignore', default=False, action='store_true', help='Ignore empty paths')

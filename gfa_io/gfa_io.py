@@ -1,4 +1,7 @@
 from collections import Iterable
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+import Bio.SeqIO as SeqIO
 import networkx as nx
 import re
 import bz2
@@ -118,18 +121,19 @@ class OptionalField(BaseHelper):
         self.val = str_val[str_val.find(tokens[1]) + 2:]
 
         # set the function for returning a correctly typed value.
-        if self.type in 'AZJ':
+        # added all cases as some software does not respect specification.
+        if self.type in 'AZJazj':
             self.get = self.get_str
-        elif self.type == 'i':
+        elif self.type in 'iI':
             self.get = self.get_int
-        elif self.type == 'f':
+        elif self.type in 'fF':
             self.get = self.get_float
-        elif self.type == 'H':
+        elif self.type in 'Hh':
             self.get = self.get_bytearray
-        elif self.type == 'B':
+        elif self.type in 'Bb':
             self.get = self.get_numarray
         else:
-            raise IOError('unknown field type [{}]'.format(self.type))
+            raise IOError('unknown field type [{}] on line [{}]'.format(self.type, str_val))
 
     def get_int(self):
         return int(self.val)
@@ -261,11 +265,11 @@ class Path(BaseHelper):
 
 class GFA(object):
 
-    def to_graph(self, include_seq=False, annotate_paths=False, collections_to_str=True):
+    def to_graph(self, include_seq=False, include_paths=False, collections_to_str=True, add_label=False):
         """
         Convert the instance of a Networkx DiGraph.
         :param include_seq: include the sequencce as a node attribute
-        :param annotate_paths: add node path membership as node attribute
+        :param include_paths: include paths as graph attribute
         :param collections_to_str: convert attributes which are collections to strings.
         :return: networkx.DiGraph
         """
@@ -278,6 +282,8 @@ class GFA(object):
                 attrs[k] = v.get()
             if include_seq:
                 attrs['seq'] = si.seq
+            if add_label:
+                attrs['label'] = si._id()
             g.add_node(si._id(), attrs)
 
         # add edges
@@ -289,16 +295,18 @@ class GFA(object):
             }
             g.add_edge(li._from, li.to, attrs)
 
-        if annotate_paths:
+        if include_paths:
+            g.graph['paths'] = {}
             # collect all the path steps for each node
             for n, p in enumerate(gfa.paths):
-                last = len(p.segment_names)
-                for m, (sid, so) in enumerate(p.segment_names):
-                    if m == last:
-                        # mark the last element so its easy to discern
-                        g.node[sid].setdefault('paths', []).append('p{}.{}|'.format(n, m))
-                    else:
-                        g.node[sid].setdefault('paths', []).append('p{}.{}'.format(n, m))
+                g.graph['paths'][p.name] = p.segment_names
+#                last = len(p.segment_names)
+#                for m, (sid, so) in enumerate(p.segment_names):
+#                    if m == last:
+#                        # mark the last element so its easy to discern
+#                        g.node[sid].setdefault('paths', []).append('p{}.{}|'.format(n, m))
+#                    else:
+#                        g.node[sid].setdefault('paths', []).append('p{}.{}'.format(n, m))
 
         if collections_to_str:
             # stringify collection attributes.
@@ -309,6 +317,36 @@ class GFA(object):
                         d[k] = ' '.join(vv for vv in sorted(v))
 
         return g
+
+    def to_fasta(self, output, verbose=False):
+        """
+        Write all segments to Fasta
+        :param output: output file name or handle
+        :param verbose: enable some runtime information
+        """
+        if isinstance(output, basestring):
+            out_hndl = open(output, 'w')
+        else:
+            out_hndl = output
+
+        try:
+            n = 0
+            for _id, _s in self.segments.iteritems():
+                SeqIO.write(SeqRecord(Seq(_s.seq), id=_id, description=''), out_hndl, 'fasta')
+                n += 1
+            if verbose:
+                print 'Wrote {} segments'.format(n)
+
+        finally:
+            if isinstance(output, basestring):
+                out_hndl.close()
+
+    def __repr__(self):
+        return 'Segments: {}, Paths: {}, Links: {}, Containments: {}'.format(
+            len(self.segments), len(self.paths), len(self.links), len(self.containments))
+
+    def __str__(self):
+        return self.__repr__()
 
     def __init__(self, filename, ignore_isolate_paths=False):
         """
@@ -380,8 +418,9 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--node-labels', default=False, action='store_true', help='Add additional label attributes to nodes')
     parser.add_argument('--seqs', default=False, action='store_true', help='Include sequence data')
-    parser.add_argument('--paths', default=False, action='store_true', help='Annotate paths')
+    parser.add_argument('--paths', default=False, action='store_true', help='Include paths')
     parser.add_argument('--ignore', default=False, action='store_true', help='Ignore empty paths')
     parser.add_argument('--dedup', default=False, action='store_true', help='Remove what appear to be redundant paths')
     parser.add_argument('input', help='Input GFA file')
@@ -392,7 +431,8 @@ if __name__ == '__main__':
     gfa = GFA(args.input, args.ignore)
 
     print 'Converting to GraphML'
-    g = gfa.to_graph(include_seq=args.seqs, annotate_paths=args.paths, collections_to_str=True)
+    g = gfa.to_graph(include_seq=args.seqs, include_paths=args.paths, collections_to_str=True,
+                     add_label=args.node_labels)
     print nx.info(g)
 
     if args.dedup:
@@ -407,4 +447,4 @@ if __name__ == '__main__':
         g.remove_edges_from(to_del)
         print nx.info(g)
 
-    nx.write_graphml(g, args.output)
+    nx.write_yaml(g, args.output)

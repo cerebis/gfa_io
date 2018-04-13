@@ -332,7 +332,8 @@ class GFA(object):
         try:
             n = 0
             for _id, _s in self.segments.iteritems():
-                SeqIO.write(SeqRecord(Seq(_s.seq), id=_id, description=''), out_hndl, 'fasta')
+                desc = ' '.join(['{}:{}'.format(_o._id(), _o.get()) for _o in _s.optionals.values()])
+                SeqIO.write(SeqRecord(Seq(_s.seq), id=_id, description=desc), out_hndl, 'fasta')
                 n += 1
             if verbose:
                 print 'Wrote {} segments'.format(n)

@@ -265,11 +265,11 @@ class Path(BaseHelper):
 
 class GFA(object):
 
-    def to_graph(self, include_seq=False, include_paths=False, collections_to_str=True, add_label=False):
+    def to_graph(self, include_seq=False, annotate_paths=False, collections_to_str=True, add_label=False):
         """
         Convert the instance of a Networkx DiGraph.
         :param include_seq: include the sequencce as a node attribute
-        :param include_paths: include paths as graph attribute
+        :param annotate_paths: add node path membership as node attribute
         :param collections_to_str: convert attributes which are collections to strings.
         :return: networkx.DiGraph
         """
@@ -283,8 +283,8 @@ class GFA(object):
             if include_seq:
                 attrs['seq'] = si.seq
             if add_label:
-                attrs['label'] = si._id()
-            g.add_node(si._id(), attrs)
+                attrs['label'] = si.name
+            g.add_node(si.name, attrs)
 
         # add edges
         for li in self.links.values():
@@ -295,18 +295,18 @@ class GFA(object):
             }
             g.add_edge(li._from, li.to, attrs)
 
-        if include_paths:
-            g.graph['paths'] = {}
+        if annotate_paths:
+            # g.graph['paths'] = {}
             # collect all the path steps for each node
             for n, p in enumerate(gfa.paths):
-                g.graph['paths'][p.name] = p.segment_names
-#                last = len(p.segment_names)
-#                for m, (sid, so) in enumerate(p.segment_names):
-#                    if m == last:
-#                        # mark the last element so its easy to discern
-#                        g.node[sid].setdefault('paths', []).append('p{}.{}|'.format(n, m))
-#                    else:
-#                        g.node[sid].setdefault('paths', []).append('p{}.{}'.format(n, m))
+                # g.graph['paths'][p.name] = p.segment_names
+                last = len(p.segment_names)
+                for m, (sid, so) in enumerate(p.segment_names):
+                    if m == last-1:
+                        # mark the last element so its easy to discern
+                        g.node[sid].setdefault('paths', []).append('p{}.{}|'.format(n, m))
+                    else:
+                        g.node[sid].setdefault('paths', []).append('p{}.{}'.format(n, m))
 
         if collections_to_str:
             # stringify collection attributes.
@@ -420,7 +420,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--node-labels', default=False, action='store_true', help='Add additional label attributes to nodes')
     parser.add_argument('--seqs', default=False, action='store_true', help='Include sequence data')
-    parser.add_argument('--paths', default=False, action='store_true', help='Include paths')
+    parser.add_argument('--paths', default=False, action='store_true', help='Annotate paths')
     parser.add_argument('--ignore', default=False, action='store_true', help='Ignore empty paths')
     parser.add_argument('--dedup', default=False, action='store_true', help='Remove what appear to be redundant paths')
     parser.add_argument('input', help='Input GFA file')
@@ -431,7 +431,7 @@ if __name__ == '__main__':
     gfa = GFA(args.input, args.ignore)
 
     print 'Converting to GraphML'
-    g = gfa.to_graph(include_seq=args.seqs, include_paths=args.paths, collections_to_str=True,
+    g = gfa.to_graph(include_seq=args.seqs, annotate_paths=args.paths, collections_to_str=True,
                      add_label=args.node_labels)
     print nx.info(g)
 
@@ -447,4 +447,5 @@ if __name__ == '__main__':
         g.remove_edges_from(to_del)
         print nx.info(g)
 
-    nx.write_yaml(g, args.output)
+    nx.write_graphml(g, args.output)
+    # nx.write_yaml(g, args.output)

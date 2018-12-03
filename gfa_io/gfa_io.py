@@ -362,7 +362,7 @@ class GFA(object):
         self.segments = {}
         self.links = {}
         self.containments = []
-        self.paths = []
+        self.paths = {}
 
         with open_input(filename) as input_h:
 
@@ -408,7 +408,8 @@ class GFA(object):
 
                 elif line.startswith('P'):
                     try:
-                        self.paths.append(Path(line))
+                        p = Path(line)
+                        self.paths[p] = p
                     except MissingFieldsError as e:
                         if not ignore_isolate_paths:
                             raise e

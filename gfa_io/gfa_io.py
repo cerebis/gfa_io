@@ -170,13 +170,12 @@ class Segment(BaseHelper):
 
         self.name = tokens[1]
         self.seq = None
+        self.length = 0
         # '*' marks a dummy sequence
-        if tokens[2] == '*':
-            self.length = 0
-        elif not skip_seq:
-            self.seq = tokens[2]
-
-        self.length = len(tokens[2])
+        if tokens[2] != '*':
+            if not skip_seq:
+                self.seq = tokens[2]
+            self.length = len(tokens[2])
 
         self.optionals = self.read_optionals(tokens)
 

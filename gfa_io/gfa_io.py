@@ -20,9 +20,9 @@ def open_input(fname):
     """
     suffix = fname.split('.')[-1].lower()
     if suffix == 'bz2':
-        return bz2.BZ2File(fname, 'r')
+        return bz2.open(fname, 'rt')
     elif suffix == 'gz':
-        return gzip.GzipFile(fname, 'r')
+        return gzip.open(fname, 'rt')
     else:
         return open(fname, 'r')
 
@@ -51,7 +51,7 @@ class BaseHelper(object):
 
     def __repr__(self):
         o = self._id()
-        if isinstance(o, (int, float, basestring)):
+        if isinstance(o, (int, float, str)):
             return o
         elif isinstance(o, Iterable):
             return ','.join(str(v) for v in o)
@@ -163,7 +163,7 @@ class Segment(BaseHelper):
     """
     A Segment record
     """
-    def __init__(self, str_val):
+    def __init__(self, str_val, skip_seq):
         super(Segment, self).__init__(3, _type='S')
 
         tokens = self.split(str_val)
@@ -171,16 +171,14 @@ class Segment(BaseHelper):
         self.name = tokens[1]
         self.seq = None
         # '*' marks a dummy sequence
-        if tokens[2] != '*':
+        if tokens[2] == '*':
+            self.length = 0
+        elif not skip_seq:
             self.seq = tokens[2]
 
-        self.optionals = self.read_optionals(tokens)
+        self.length = len(tokens[2])
 
-    def length(self):
-        """
-        :return: sequence length
-        """
-        return len(self.seq)
+        self.optionals = self.read_optionals(tokens)
 
     def _id(self):
         return self.name
@@ -277,14 +275,14 @@ class GFA(object):
 
         # add nodes. We do this first to include unconnected nodes
         for si in self.segments.values():
-            attrs = {'length': si.length()}
-            for k, v in si.optionals.iteritems():
+            attrs = {'length': si.length}
+            for k, v in si.optionals.items():
                 attrs[k] = v.get()
             if include_seq:
                 attrs['seq'] = si.seq
             if add_label:
                 attrs['label'] = si.name
-            g.add_node(si.name, attrs)
+            g.add_node(si.name, **attrs)
 
         # add edges
         for li in self.links.values():
@@ -293,7 +291,7 @@ class GFA(object):
                 'vdir': True if li.to_orient == '+' else False,
                 'ovlp': li.overlap
             }
-            g.add_edge(li._from, li.to, attrs)
+            g.add_edge(li._from, li.to, **attrs)
 
         if annotate_paths:
             # g.graph['paths'] = {}
@@ -311,9 +309,9 @@ class GFA(object):
         if collections_to_str:
             # stringify collection attributes.
             # as for instance networkx graphml does not support collections.
-            for n, d in g.nodes_iter(data=True):
-                for k, v in d.iteritems():
-                    if not isinstance(v, basestring) and isinstance(v, Iterable):
+            for n, d in g.nodes(data=True):
+                for k, v in d.items():
+                    if not isinstance(v, str) and isinstance(v, Iterable):
                         d[k] = ' '.join(vv for vv in sorted(v))
 
         return g
@@ -324,22 +322,22 @@ class GFA(object):
         :param output: output file name or handle
         :param verbose: enable some runtime information
         """
-        if isinstance(output, basestring):
+        if isinstance(output, str):
             out_hndl = open(output, 'w')
         else:
             out_hndl = output
 
         try:
             n = 0
-            for _id, _s in self.segments.iteritems():
+            for _id, _s in self.segments.items():
                 desc = ' '.join(['{}:{}'.format(_o._id(), _o.get()) for _o in _s.optionals.values()])
                 SeqIO.write(SeqRecord(Seq(_s.seq), id=_id, description=desc), out_hndl, 'fasta')
                 n += 1
             if verbose:
-                print 'Wrote {} segments'.format(n)
+                print('Wrote {} segments'.format(n))
 
         finally:
-            if isinstance(output, basestring):
+            if isinstance(output, str):
                 out_hndl.close()
 
     def __repr__(self):
@@ -349,7 +347,7 @@ class GFA(object):
     def __str__(self):
         return self.__repr__()
 
-    def __init__(self, filename, ignore_isolate_paths=False):
+    def __init__(self, filename, ignore_isolate_paths=False, skip_sequence_data=False):
         """
         Instantiate from a file. Only a single GFA record is expected to be found.
         :param filename: the gfa file to read
@@ -357,6 +355,7 @@ class GFA(object):
         """
         self.filename = filename
         self.ignore_isolate_paths = ignore_isolate_paths
+        self.skip_sequence_data = skip_sequence_data
         self.comments = []
         self.header = {}
         self.segments = {}
@@ -396,7 +395,7 @@ class GFA(object):
                             raise IOError('unsupported GFA version [{}]'.format(self.version))
 
                 elif line.startswith('S'):
-                    s = Segment(line)
+                    s = Segment(line, self.skip_sequence_data)
                     self.segments[s.name] = s
 
                 elif line.startswith('L'):
@@ -430,25 +429,25 @@ if __name__ == '__main__':
     parser.add_argument('output', help='Output GraphML file')
     args = parser.parse_args()
 
-    print 'Reading GFA'
+    print('Reading GFA')
     gfa = GFA(args.input, args.ignore)
 
-    print 'Converting to GraphML'
+    print('Converting to GraphML')
     g = gfa.to_graph(include_seq=args.seqs, annotate_paths=args.paths, collections_to_str=True,
                      add_label=args.node_labels)
-    print nx.info(g)
+    print(nx.info(g))
 
     if args.dedup:
-        print '\n\nRemoving redundant edges'
+        print('\n\nRemoving redundant edges')
         to_del = set()
-        for u, v in g.edges_iter():
+        for u, v in g.edges():
             if g.has_edge(v, u):
                 if g[u][v]['udir'] == g[v][u]['udir'] and g[u][v]['vdir'] == g[v][u]['vdir']:
                     if v < u:
                         u, v = v, u
                     to_del.add((u, v))
         g.remove_edges_from(to_del)
-        print nx.info(g)
+        print(nx.info(g))
 
     nx.write_graphml(g, args.output)
     # nx.write_yaml(g, args.output)

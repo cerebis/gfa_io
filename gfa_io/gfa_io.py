@@ -1,11 +1,64 @@
-from collections import Iterable
+from collections import Iterable, namedtuple
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 import Bio.SeqIO as SeqIO
-import networkx as nx
-import re
 import bz2
 import gzip
+import logging
+import networkx as nx
+import re
+
+logger = logging.getLogger(__name__)
+
+
+SegmentInfo = namedtuple('SegmentInfo', ['name', 'length'])
+
+
+def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circular=True, require_reciprocal=False):
+    """
+    Check a GFA file for putative circular, isolated segments. The test for circularity is simply
+    the existence of a self-loop.
+
+    Reciprocal edges is a strong constraint, leading to the removal of many edges. This may or may
+    not lead to a substantial increase of false positives relative to any increase in true positives.
+
+    :param gfa_file: the filename of the GFA
+    :param min_len: minimum length below which segments are ignored
+    :param max_len: maximum length above which segments are ignored
+    :param require_circular: require self-loop indicating circular
+    :param require_reciprocal: in conversion of the GFA to a undirected graph, require that there be
+    reciprocal edges between u and v. ie. (u,v) and (v,u). If there are not, then no edge is added to
+    the undirected graph.
+    :return: a list of suspected circular isolated segments
+    """
+
+    g = GFA(gfa_file, skip_sequence_data=True) \
+        .to_graph(include_seq=False) \
+        .to_undirected(reciprocal=require_reciprocal)
+
+    logger.debug(nx.info(g).replace('\n', ', '))
+
+    suspects = []
+    for i, gi in enumerate(nx.connected_components(g)):
+
+        # single isolated segment
+        if len(gi) != 1:
+            continue
+
+        u = gi.pop()
+
+        # skip very short or long segments
+        lu = g.nodes[u]['length']
+        if lu < min_len or (max_len is not None and lu > max_len):
+            continue
+
+        # a simple test for circularity, the existence of a self-loop
+        if require_circular and u not in g[u]:
+            continue
+
+        suspects.append(SegmentInfo(u, lu))
+
+    return suspects
 
 
 def open_input(fname):
@@ -24,7 +77,7 @@ def open_input(fname):
     elif suffix == 'gz':
         return gzip.open(fname, 'rt')
     else:
-        return open(fname, 'r')
+        return open(fname, 'rt')
 
 
 class MissingFieldsError(IOError):
@@ -265,9 +318,10 @@ class GFA(object):
     def to_graph(self, include_seq=False, annotate_paths=False, collections_to_str=True, add_label=False):
         """
         Convert the instance of a Networkx DiGraph.
-        :param include_seq: include the sequencce as a node attribute
-        :param annotate_paths: add node path membership as node attribute
+        :param include_seq: include the segment sequences as node attributes
+        :param annotate_paths: add path membership as node attributes
         :param collections_to_str: convert attributes which are collections to strings.
+        :param add_label: include segment names also as node attributes (label)
         :return: networkx.DiGraph
         """
         g = nx.DiGraph()
@@ -301,9 +355,9 @@ class GFA(object):
                 for m, (sid, so) in enumerate(p.segment_names):
                     if m == last-1:
                         # mark the last element so its easy to discern
-                        g.node[sid].setdefault('paths', []).append('p{}.{}|'.format(n, m))
+                        g.nodes[sid].setdefault('paths', []).append('p{}.{}|'.format(n, m))
                     else:
-                        g.node[sid].setdefault('paths', []).append('p{}.{}'.format(n, m))
+                        g.nodes[sid].setdefault('paths', []).append('p{}.{}'.format(n, m))
 
         if collections_to_str:
             # stringify collection attributes.
@@ -449,4 +503,3 @@ if __name__ == '__main__':
         print(nx.info(g))
 
     nx.write_graphml(g, args.output)
-    # nx.write_yaml(g, args.output)

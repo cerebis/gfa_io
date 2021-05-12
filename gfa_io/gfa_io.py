@@ -7,11 +7,12 @@ import gzip
 import logging
 import networkx as nx
 import re
+import tqdm
 
 logger = logging.getLogger(__name__)
 
 
-SegmentInfo = namedtuple('SegmentInfo', ['name', 'length'])
+SegmentInfo = namedtuple('SegmentInfo', ['name', 'length', 'depth'])
 
 
 def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circular=True, require_reciprocal=False):
@@ -32,8 +33,8 @@ def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circula
     :return: a list of suspected circular isolated segments
     """
 
-    g = GFA(gfa_file, skip_sequence_data=True) \
-        .to_graph(include_seq=False) \
+    g = GFA(gfa_file, skip_sequence_data=True, progress=True) \
+        .to_graph(include_seq=False, progress=True) \
         .to_undirected(reciprocal=require_reciprocal)
 
     logger.debug(nx.info(g).replace('\n', ', '))
@@ -48,15 +49,19 @@ def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circula
         u = gi.pop()
 
         # skip very short or long segments
-        lu = g.nodes[u]['length']
-        if lu < min_len or (max_len is not None and lu > max_len):
+        len_u = g.nodes[u]['length']
+        if len_u < min_len or (max_len is not None and len_u > max_len):
             continue
+
+        dp_u = None
+        if 'dp' in g.nodes[u]:
+            dp_u = g.nodes[u]['dp']
 
         # a simple test for circularity, the existence of a self-loop
         if require_circular and u not in g[u]:
             continue
 
-        suspects.append(SegmentInfo(u, lu))
+        suspects.append(SegmentInfo(u, len_u, dp_u))
 
     return suspects
 
@@ -315,19 +320,21 @@ class Path(BaseHelper):
 
 class GFA(object):
 
-    def to_graph(self, include_seq=False, annotate_paths=False, collections_to_str=True, add_label=False):
+    def to_graph(self, include_seq=False, annotate_paths=False, collections_to_str=True, add_label=False,
+                 progress=False):
         """
         Convert the instance of a Networkx DiGraph.
         :param include_seq: include the segment sequences as node attributes
         :param annotate_paths: add path membership as node attributes
         :param collections_to_str: convert attributes which are collections to strings.
         :param add_label: include segment names also as node attributes (label)
+        :param progress: show progress
         :return: networkx.DiGraph
         """
         g = nx.DiGraph()
 
         # add nodes. We do this first to include unconnected nodes
-        for si in self.segments.values():
+        for si in tqdm.tqdm(self.segments.values(), desc='Creating nodes', disable=not progress):
             attrs = {'length': si.length}
             for k, v in si.optionals.items():
                 attrs[k] = v.get()
@@ -338,7 +345,7 @@ class GFA(object):
             g.add_node(si.name, **attrs)
 
         # add edges
-        for li in self.links.values():
+        for li in tqdm.tqdm(self.links.values(), desc='Creating edges', disable=not progress):
             attrs = {
                 'udir': True if li.from_orient == '+' else False,
                 'vdir': True if li.to_orient == '+' else False,
@@ -400,11 +407,12 @@ class GFA(object):
     def __str__(self):
         return self.__repr__()
 
-    def __init__(self, filename, ignore_isolate_paths=False, skip_sequence_data=False):
+    def __init__(self, filename, ignore_isolate_paths=False, skip_sequence_data=False, progress=False):
         """
         Instantiate from a file. Only a single GFA record is expected to be found.
         :param filename: the gfa file to read
         :param ignore_isolate_paths: some assemblers specify non-compliant, single node paths.
+        :param progress: show progress while reading
         """
         self.filename = filename
         self.ignore_isolate_paths = ignore_isolate_paths
@@ -418,7 +426,7 @@ class GFA(object):
 
         with open_input(filename) as input_h:
 
-            for line in input_h:
+            for line in tqdm.tqdm(input_h, desc='Reading GFA', disable=not progress):
 
                 line = line.strip()
                 if not line:

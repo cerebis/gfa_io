@@ -21,7 +21,8 @@ setup(
 
     install_requires=['biopython',
                       'networkx',
-                      'pandas'],
+                      'pandas',
+                      'tqdm'],
 
     entry_points={
         'console_scripts': ['gfa_utils=gfa_io.command_line:main'],

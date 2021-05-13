@@ -376,7 +376,7 @@ class GFA(object):
 
         return g
 
-    def to_fasta(self, output, verbose=False):
+    def to_fasta(self, output):
         """
         Write all segments to Fasta
         :param output: output file name or handle
@@ -388,13 +388,12 @@ class GFA(object):
             out_hndl = output
 
         try:
-            n = 0
+            _nseq = 0
             for _id, _s in self.segments.items():
                 desc = ' '.join(['{}:{}'.format(_o._id(), _o.get()) for _o in _s.optionals.values()])
                 SeqIO.write(SeqRecord(Seq(_s.seq), id=_id, description=desc), out_hndl, 'fasta')
-                n += 1
-            if verbose:
-                print('Wrote {} segments'.format(n))
+                _nseq += 1
+            logger.info('Wrote {} segments'.format(_nseq))
 
         finally:
             if isinstance(output, str):
@@ -473,41 +472,3 @@ class GFA(object):
                     except MissingFieldsError as e:
                         if not ignore_isolate_paths:
                             raise e
-
-
-if __name__ == '__main__':
-
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--node-labels', default=False, action='store_true',
-                        help='Add additional label attributes to nodes')
-    parser.add_argument('--seqs', default=False, action='store_true', help='Include sequence data')
-    parser.add_argument('--paths', default=False, action='store_true', help='Annotate paths')
-    parser.add_argument('--ignore', default=False, action='store_true', help='Ignore empty paths')
-    parser.add_argument('--dedup', default=False, action='store_true', help='Remove what appear to be redundant paths')
-    parser.add_argument('input', help='Input GFA file')
-    parser.add_argument('output', help='Output GraphML file')
-    args = parser.parse_args()
-
-    print('Reading GFA')
-    gfa = GFA(args.input, args.ignore)
-
-    print('Converting to GraphML')
-    g = gfa.to_graph(include_seq=args.seqs, annotate_paths=args.paths, collections_to_str=True,
-                     add_label=args.node_labels)
-    print(nx.info(g))
-
-    if args.dedup:
-        print('\n\nRemoving redundant edges')
-        to_del = set()
-        for u, v in g.edges():
-            if g.has_edge(v, u):
-                if g[u][v]['udir'] == g[v][u]['udir'] and g[u][v]['vdir'] == g[v][u]['vdir']:
-                    if v < u:
-                        u, v = v, u
-                    to_del.add((u, v))
-        g.remove_edges_from(to_del)
-        print(nx.info(g))
-
-    nx.write_graphml(g, args.output)

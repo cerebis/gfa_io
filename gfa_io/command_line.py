@@ -18,6 +18,13 @@ def main():
                                        help='choose an analysis stage for further options')
     subparsers.required = True
 
+    cmd_update = subparsers.add_parser('update-segments', 
+                                       description='Update segment sequences from FASTA')
+    cmd_update.add_argument('GFA_INPUT', help='Input GFA file')
+    cmd_update.add_argument('FASTA_INPUT', help='Input FASTA file containing updated segment sequences (ie. post-polishing')
+    cmd_update.add_argument('GFA_OUTPUT', help='Output GFA file [stdout]', nargs='?', default=sys.stdout,
+                            type=argparse.FileType('wt'))
+
     cmd_isolates = subparsers.add_parser('isolates',
                                          description='Find isolated segments in GFA file')
     cmd_isolates.add_argument('--reciprocal', default=False, action='store_true',
@@ -27,13 +34,13 @@ def main():
     cmd_isolates.add_argument('--circular', default=False, action='store_true', help='Maximum segment length')
     cmd_isolates.add_argument('GFA_INPUT', help='Input GFA file')
     cmd_isolates.add_argument('CSV_OUTPUT', help='Output CSV file [stdout]', nargs='?', default=sys.stdout,
-                              type=argparse.FileType('w'))
+                              type=argparse.FileType('wt'))
 
     cmd_segments = subparsers.add_parser('dump-segments',
                                          description='Dump segments to FASTA')
     cmd_segments.add_argument('GFA_INPUT', help='Input GFA file')
     cmd_segments.add_argument('FASTA_OUTPUT', help='Output FASTA file [stdout]', nargs='?', default=sys.stdout,
-                              type=argparse.FileType('w'))
+                              type=argparse.FileType('wt'))
 
     cmd_convert = subparsers.add_parser('convert',
                                         description='Convert GFA to general graph formats')
@@ -47,7 +54,7 @@ def main():
                              help='Remove what appear to be redundant paths')
     cmd_convert.add_argument('GFA_INPUT', help='Input GFA file')
     cmd_convert.add_argument('GRAPH_OUTPUT', help='Output graph file', nargs='?', default=sys.stdout,
-                             type=argparse.FileType('w'))
+                             type=argparse.FileType('wt'))
 
     args = parser.parse_args()
 
@@ -70,7 +77,10 @@ def main():
     ch.setFormatter(formatter)
     root.addHandler(ch)
 
-    if args.command == 'isolates':
+    if args.command == 'update-segments':
+        gfa_io.update_segments(args.GFA_INPUT, args.FASTA_INPUT, args.GFA_OUTPUT)
+
+    elif args.command == 'isolates':
 
         suspects = gfa_io.find_isolated_segments(args.GFA_INPUT, args.min_len, args.max_len,
                                                  args.circular, args.reciprocal)

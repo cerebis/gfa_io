@@ -1,4 +1,4 @@
-from collections import Iterable, namedtuple
+from collections import Iterable, namedtuple, OrderedDict
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 import Bio.SeqIO as SeqIO
@@ -13,6 +13,37 @@ logger = logging.getLogger(__name__)
 
 
 SegmentInfo = namedtuple('SegmentInfo', ['name', 'length', 'depth'])
+
+
+def update_segments(gfa_file, fasta_file, output_stream):
+    """
+    Update the segment sequences using the supplied fasta file. 
+
+    :param gfa_file: input gfa to update
+    :param fasta_file: input fasta for to use as sequence source
+    :param output_stream: output stream for updated gfa file
+    """
+
+    gfa = GFA(gfa_file, skip_sequence_data=False, progress=True)
+
+    changed = set()
+    for new_seq in tqdm.tqdm(SeqIO.parse(fasta_file, 'fasta'), desc='Updating nodes'):
+
+        if new_seq.id not in gfa.segments:
+            raise RuntimeError('Fasta sequence {} was not found as a segment'.format(new_seq.id))
+
+        si = gfa.segments[new_seq.id]
+        si.length = len(new_seq)
+        si.seq = str(new_seq.seq)
+        logger.debug('Updated {}'.format(si.name))
+        
+        if si.name in changed:
+            raise RuntimeError('Duplicate fasta entries for segment {}'.format(si.name))
+        changed.add(si.name)
+
+    logger.info('Updated {} of {} segments'.format(len(changed), len(gfa.segments)))
+
+    gfa.write(output_stream)
 
 
 def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circular=True, require_reciprocal=False):
@@ -33,9 +64,8 @@ def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circula
     :return: a list of suspected circular isolated segments
     """
 
-    g = GFA(gfa_file, skip_sequence_data=True, progress=True) \
-        .to_graph(include_seq=False, progress=True) \
-        .to_undirected(reciprocal=require_reciprocal)
+    g = GFA(gfa_file, skip_sequence_data=True, progress=True)\
+        .to_networkx(include_seq=False, progress=True)
 
     logger.debug(nx.info(g).replace('\n', ', '))
 
@@ -48,6 +78,10 @@ def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circula
 
         u = gi.pop()
 
+        # a simple test for circularity, the existence of a self-loop
+        if require_circular and u not in g[u]:
+            continue
+
         # skip very short or long segments
         len_u = g.nodes[u]['length']
         if len_u < min_len or (max_len is not None and len_u > max_len):
@@ -56,10 +90,6 @@ def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circula
         dp_u = None
         if 'dp' in g.nodes[u]:
             dp_u = g.nodes[u]['dp']
-
-        # a simple test for circularity, the existence of a self-loop
-        if require_circular and u not in g[u]:
-            continue
 
         suspects.append(SegmentInfo(u, len_u, dp_u))
 
@@ -148,7 +178,7 @@ class BaseHelper(object):
         :param fields: the array of fields for a given record
         :return: dict of OptionalField objects
         """
-        optionals = {}
+        optionals = OrderedDict()
         if len(fields) > self.min_fields:
             for fi in fields[self.min_fields:]:
                 o = OptionalField(fi)
@@ -180,18 +210,27 @@ class OptionalField(BaseHelper):
 
         # set the function for returning a correctly typed value.
         # added all cases as some software does not respect specification.
-        if self.type in 'AZJazj':
+        if self.type in 'AZJ':
             self.get = self.get_str
-        elif self.type in 'iI':
+        elif self.type == 'i':
             self.get = self.get_int
-        elif self.type in 'fF':
+        elif self.type == 'f':
             self.get = self.get_float
-        elif self.type in 'Hh':
+        elif self.type == 'H':
             self.get = self.get_bytearray
-        elif self.type in 'Bb':
+        elif self.type == 'B':
             self.get = self.get_numarray
         else:
             raise IOError('unknown field type [{}] on line [{}]'.format(self.type, str_val))
+
+    def __str__(self):
+        if self.type in 'AZ':
+            _str_val = self.val
+        elif self.type in 'if':
+            _str_val = str(self.val)
+        elif self.type in 'HB':
+            raise RuntimeError('Writing byte array type (H) not implemented')
+        return '{}:{}:{}'.format(self.tag, self.type, _str_val)
 
     def get_int(self):
         return int(self.val)
@@ -250,10 +289,10 @@ class Link(BaseHelper):
 
         tokens = self.split(str_val)
 
-        self._from = tokens[1]
-        self.from_orient = tokens[2]
-        self.to = tokens[3]
-        self.to_orient = tokens[4]
+        self.src = tokens[1]
+        self.src_orient = tokens[2]
+        self.dest = tokens[3]
+        self.dest_orient = tokens[4]
 
         self.overlap = None
         # overlaps can have dummy entries
@@ -263,7 +302,7 @@ class Link(BaseHelper):
         self.optionals = self.read_optionals(tokens)
 
     def _id(self):
-        return self._from, self.from_orient, self.to, self.to_orient
+        return self.src, self.src_orient, self.dest, self.dest_orient
 
 
 class Containment(BaseHelper):
@@ -307,8 +346,8 @@ class Path(BaseHelper):
         for ti in tokens[2].split(','):
             sid, so = ti[:-1], ti[-1]
             self.segment_names.append((sid, so))
-        self.overlaps = []
 
+        self.overlaps = []
         # overlap can have dummy entries
         if tokens[3] != '*':
             for ti in tokens[3].split(','):
@@ -320,8 +359,8 @@ class Path(BaseHelper):
 
 class GFA(object):
 
-    def to_graph(self, include_seq=False, annotate_paths=False, collections_to_str=True, add_label=False,
-                 progress=False):
+    def to_networkx(self, include_seq=False, annotate_paths=False, collections_to_str=True,
+                    add_label=False, progress=False):
         """
         Convert the instance of a Networkx DiGraph.
         :param include_seq: include the segment sequences as node attributes
@@ -331,7 +370,7 @@ class GFA(object):
         :param progress: show progress
         :return: networkx.DiGraph
         """
-        g = nx.DiGraph()
+        g = nx.MultiGraph()
 
         # add nodes. We do this first to include unconnected nodes
         for si in tqdm.tqdm(self.segments.values(), desc='Creating nodes', disable=not progress):
@@ -347,17 +386,15 @@ class GFA(object):
         # add edges
         for li in tqdm.tqdm(self.links.values(), desc='Creating edges', disable=not progress):
             attrs = {
-                'udir': True if li.from_orient == '+' else False,
-                'vdir': True if li.to_orient == '+' else False,
+                'src_orient': li.src_orient,
+                'dest_orient': li.dest_orient,
                 'ovlp': li.overlap
             }
-            g.add_edge(li._from, li.to, **attrs)
+            g.add_edge(li.src, li.dest, **attrs)
 
         if annotate_paths:
-            # g.graph['paths'] = {}
             # collect all the path steps for each node
-            for n, p in enumerate(gfa.paths):
-                # g.graph['paths'][p.name] = p.segment_names
+            for n, p in enumerate(self.paths):
                 last = len(p.segment_names)
                 for m, (sid, so) in enumerate(p.segment_names):
                     if m == last-1:
@@ -383,7 +420,7 @@ class GFA(object):
         :param verbose: enable some runtime information
         """
         if isinstance(output, str):
-            out_hndl = open(output, 'w')
+            out_hndl = open(output, 'wt')
         else:
             out_hndl = output
 
@@ -406,6 +443,78 @@ class GFA(object):
     def __str__(self):
         return self.__repr__()
 
+    def write(self, output):
+
+        if isinstance(output, str):
+            out_hndl = open(output, 'wt')
+        else:
+            out_hndl = output
+
+        logger.debug('Writing GFA to {}'.format(out_hndl.name))
+
+        # write comments
+        for ci in self.comments:
+            out_hndl.write('#{}\n'.format(ci))
+
+        # write header
+        out_hndl.write('{}\n'.format('\t'.join(['H', str(self.header['VN'])])))
+
+        def to_str(f):
+            if not f:
+                return '*'
+            else:
+                if isinstance(f, str):
+                    return f
+                elif isinstance(f, list):
+                    return ','.join(str(fi) for fi in f)
+                else:
+                    return str(f)
+
+        # write segments
+        for si in self.segments.values():
+
+            fields = ['S', si.name, to_str(si.seq)]
+            for oi in si.optionals.values():
+                fields.append(str(oi))
+            out_hndl.write('{}\n'.format('\t'.join(fields)))
+
+        # write links
+        for li in self.links.values():
+
+            fields = ['L',
+                      li.src, li.src_orient,
+                      li.dest, li.dest_orient,
+                      to_str(li.overlap)]
+            for oi in li.optionals.values():
+                fields.append(str(oi))
+            out_hndl.write('{}\n'.format('\t'.join(fields)))
+
+        # write containments
+        for ci in self.containments.values():
+
+            fields = ['C',
+                      ci.container, ci.container_orient,
+                      ci.contained, ci.contained_orient,
+                      to_str(ci.pos), to_str(ci.overlap)]
+            for oi in ci.optionals.values():
+                fields.append(str(oi))
+            out_hndl.write('{}\n'.format('\t'.join(fields)))
+
+        # write paths
+        for pi in self.paths.values():
+
+            segnames_str = ','.join('{}{}'.format(sni[0], sni[1]) for sni in pi.segment_names)
+
+            if not pi.overlaps:
+                overlap_str = '*'
+            else:
+                overlap_str = ','.join(ovi for ovi in pi.overlaps)
+
+            fields = ['P', pi.name, segnames_str, overlap_str]
+            for oi in ci.optionals.values():
+                fields.append(str(oi))
+            out_hndl.write('{}\n'.format('\t'.join(fields)))
+
     def __init__(self, filename, ignore_isolate_paths=False, skip_sequence_data=False, progress=False):
         """
         Instantiate from a file. Only a single GFA record is expected to be found.
@@ -417,11 +526,11 @@ class GFA(object):
         self.ignore_isolate_paths = ignore_isolate_paths
         self.skip_sequence_data = skip_sequence_data
         self.comments = []
-        self.header = {}
-        self.segments = {}
-        self.links = {}
-        self.containments = []
-        self.paths = {}
+        self.header = OrderedDict()
+        self.segments = OrderedDict()
+        self.links = OrderedDict()
+        self.containments = OrderedDict()
+        self.paths = OrderedDict()
 
         with open_input(filename) as input_h:
 
@@ -463,7 +572,8 @@ class GFA(object):
                     self.links[l] = l
 
                 elif line.startswith('C'):
-                    self.containments.append(Containment(line))
+                    c = Containment(line)
+                    self.containments[c] = c
 
                 elif line.startswith('P'):
                     try:

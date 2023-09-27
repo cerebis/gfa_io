@@ -1,4 +1,5 @@
-from collections import Iterable, namedtuple, OrderedDict
+from collections import namedtuple, OrderedDict
+from collections.abc import Iterable
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 import Bio.SeqIO as SeqIO
@@ -67,7 +68,7 @@ def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circula
     g = GFA(gfa_file, skip_sequence_data=True, progress=True)\
         .to_networkx(include_seq=False, progress=True)
 
-    logger.debug(nx.info(g).replace('\n', ', '))
+    logger.debug(f'Graph details: order={g.order()}, size={g.size()}')
 
     suspects = []
     for i, gi in enumerate(nx.connected_components(g)):
@@ -417,7 +418,6 @@ class GFA(object):
         """
         Write all segments to Fasta
         :param output: output file name or handle
-        :param verbose: enable some runtime information
         """
         if isinstance(output, str):
             out_hndl = open(output, 'wt')

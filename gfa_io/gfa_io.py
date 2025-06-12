@@ -1,28 +1,31 @@
-from collections import namedtuple, OrderedDict
-from collections.abc import Iterable
-from Bio.Seq import Seq
-from Bio.SeqRecord import SeqRecord
-import Bio.SeqIO as SeqIO
 import bz2
 import gzip
+import io
 import logging
-import networkx as nx
 import re
+from abc import ABC, abstractmethod
+from collections import OrderedDict, namedtuple
+from collections.abc import Iterable
+from typing import Hashable, List, Optional, Self, TextIO
+
+import Bio.SeqIO as SeqIO
+import networkx as nx
 import tqdm
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 
 logger = logging.getLogger(__name__)
-
 
 SegmentInfo = namedtuple('SegmentInfo', ['name', 'length', 'depth'])
 
 
-def update_segments(gfa_file, fasta_file, output_stream):
+def update_segments(gfa_file: str, fasta_file: str, output_stream: io.StringIO) -> None:
     """
     Update the segment sequences using the supplied fasta file. 
 
-    :param gfa_file: input gfa to update
-    :param fasta_file: input fasta for to use as sequence source
-    :param output_stream: output stream for updated gfa file
+    :param gfa_file: Input gfa to update
+    :param fasta_file: Input fasta for to use as sequence source
+    :param output_stream: Output stream for an updated gfa file
     """
 
     gfa = GFA(gfa_file, skip_sequence_data=False, progress=True)
@@ -47,7 +50,8 @@ def update_segments(gfa_file, fasta_file, output_stream):
     gfa.write(output_stream)
 
 
-def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circular=True, require_reciprocal=False):
+def find_isolated_segments(gfa_file: str, min_len: int=2000, max_len: Optional[int]=None,
+                           require_circular: bool=True, require_reciprocal: bool=False) -> List[SegmentInfo]:
     """
     Check a GFA file for putative circular, isolated segments. The test for circularity is simply
     the existence of a self-loop.
@@ -55,14 +59,14 @@ def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circula
     Reciprocal edges is a strong constraint, leading to the removal of many edges. This may or may
     not lead to a substantial increase of false positives relative to any increase in true positives.
 
-    :param gfa_file: the filename of the GFA
-    :param min_len: minimum length below which segments are ignored
-    :param max_len: maximum length above which segments are ignored
-    :param require_circular: require self-loop indicating circular
-    :param require_reciprocal: in conversion of the GFA to a undirected graph, require that there be
-    reciprocal edges between u and v. ie. (u,v) and (v,u). If there are not, then no edge is added to
+    :param gfa_file: The filename of the GFA.
+    :param min_len: Minimum length below which segments are ignored.
+    :param max_len: Maximum length above which segments are ignored.
+    :param require_circular: Requires self-loop indicating circular.
+    :param require_reciprocal: In conversion of the GFA to an undirected graph, require that there be
+    reciprocal edges between u and v. i.e. (u,v) and (v,u). If not true, then no edge is added to
     the undirected graph.
-    :return: a list of suspected circular isolated segments
+    :return: A list of suspected circular isolated segments.
     """
 
     g = GFA(gfa_file, skip_sequence_data=True, progress=True)\
@@ -97,87 +101,93 @@ def find_isolated_segments(gfa_file, min_len=2000, max_len=None, require_circula
     return suspects
 
 
-def open_input(fname):
+def open_input(filename: str) -> TextIO:
     """
     Open a text file for input. Only the ends of filenames are inspected to determine
     if the stream requires decompression, rather than reading the start of file.
 
     Recognises gzip and bz2.
 
-    :param fname: the name of the input file
-    :return: open file handle, possibly wrapped in a decompressor
+    :param filename: The name of the input file.
+    :return: An open file handle, possibly wrapped in a decompressor.
     """
-    suffix = fname.split('.')[-1].lower()
+    suffix = filename.split('.')[-1].lower()
     if suffix == 'bz2':
-        return bz2.open(fname, 'rt')
+        return bz2.open(filename, 'rt')
     elif suffix == 'gz':
-        return gzip.open(fname, 'rt')
+        return gzip.open(filename, 'rt')
     else:
-        return open(fname, 'rt')
+        return open(filename, 'rt')
 
 
 class MissingFieldsError(IOError):
     """
     Thrown records of fewer fields that expected by the spec.
     """
-    def __init__(self, min_fields, sep, str_val):
+    def __init__(self, min_fields: int, sep: str, str_val: str) -> None:
         super(MissingFieldsError, self).__init__(
             'less than {} fields delimited by "{}" were found for record: {}'.format(
                 min_fields, sep, str_val))
 
 
-class BaseHelper(object):
+class BaseHelper(ABC):
     """
     A simple base, which simply removes the initial common task of parsing.
     """
-    def __init__(self, min_fields, _type=None, sep='\t'):
+    def __init__(self, min_fields: int, _type: Optional[str]=None, sep: str='\t') -> None:
         self._type = _type
         self.min_fields = min_fields
         self.sep = sep
 
-    def _id(self):
+    @abstractmethod
+    def _id(self) -> Hashable:
         raise RuntimeError('_id() has not been implemented')
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         o = self._id()
-        if isinstance(o, (int, float, str)):
+        if isinstance(o, str):
             return o
+        if isinstance(o, (int, float)):
+            return str(o)
         elif isinstance(o, Iterable):
             return ','.join(str(v) for v in o)
-        return o
+        else:
+            raise RuntimeError(f'Unknown type for __repr__: {o} which is type: {type(o)}')
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self._id())
 
-    def __eq__(self, other):
+    def __eq__(self, other: Self) -> bool:
         if not isinstance(other, self.__class__):
             return False
         return self._id() == other._id()
 
-    def __ne__(self, other):
+    def __ne__(self, other: Self) -> bool:
         return not self.__eq__(other)
 
-    def split(self, str_val):
+    def split(self, str_val: str) -> List[str]:
         """
         Split the delimited string representation into fields.
-        :param str_val: string representation of a record
-        :return: array of fields
+        :param str_val: A string representation of a record
+        :return: An array of fields
         """
         str_val = str_val.strip()
         if not str_val:
             raise IOError('string representation was empty or only whitespace')
         fields = str_val.split(self.sep)
         if len(fields) < self.min_fields:
-            raise MissingFieldsError(self.min_fields, self.sep.encode('string_escape'), str_val)
+            raise MissingFieldsError(self.min_fields,
+                                     self.sep.encode(errors='backslashreplace').decode(),
+                                     str_val)
         return fields
 
-    def read_optionals(self, fields):
+    def read_optionals(self, fields: List[str]) -> dict:
         """
         If a record has optional fields, beyond what are required, these will be read
         into a dictionary, keyed by their tags. Therefore, it is assumed that tags are
         unique within each record.
-        :param fields: the array of fields for a given record
-        :return: dict of OptionalField objects
+        :param fields: The array of fields for a given record
+        :return: A dict of OptionalField objects
         """
         optionals = OrderedDict()
         if len(fields) > self.min_fields:
@@ -190,11 +200,11 @@ class BaseHelper(object):
 
 class OptionalField(BaseHelper):
     """
-    A catch all object for optional fields. As these fields declare their
-    value type, this is taken into account when returning it with .get(),
-    however only one type of int is returned.
+    A catch-all object for optional fields. As these fields declare their
+    value type. This is taken into account when returning it with .get(), but
+    only one type of int is returned.
     """
-    def __init__(self, str_val):
+    def __init__(self, str_val: str) -> None:
         super(OptionalField, self).__init__(3, sep=':')
 
         tokens = self.split(str_val)
@@ -205,7 +215,7 @@ class OptionalField(BaseHelper):
 
         self.tag = tokens[0]
         self.type = tokens[1]
-        # we're assuming ":" can appear in value, therefore we don't use the
+        # we're assuming ":" can appear in val, therefore, we don't use the
         # last token split on ":"
         self.val = str_val[str_val.find(tokens[1]) + 2:]
 
@@ -224,28 +234,25 @@ class OptionalField(BaseHelper):
         else:
             raise IOError('unknown field type [{}] on line [{}]'.format(self.type, str_val))
 
-    def __str__(self):
-        if self.type in 'AZ':
-            _str_val = self.val
-        elif self.type in 'if':
-            _str_val = str(self.val)
-        elif self.type in 'HB':
-            raise RuntimeError('Writing byte array type (H) not implemented')
-        return '{}:{}:{}'.format(self.tag, self.type, _str_val)
+    def __str__(self) -> str:
+        if self.type in 'AZJif':
+            return f'{self.tag}:{self.type}:{self.val}'
+        else:
+            raise RuntimeError('Writing byte or num arrays (types H or B) is not implemented')
 
-    def get_int(self):
+    def get_int(self) -> int:
         return int(self.val)
 
-    def get_float(self):
+    def get_float(self) -> float:
         return float(self.val)
 
-    def get_str(self):
+    def get_str(self) -> str:
         return self.val
 
-    def get_bytearray(self):
+    def get_bytearray(self) -> bytearray:
         return bytearray.fromhex(self.val)
 
-    def get_numarray(self):
+    def get_numarray(self) -> List[int|float]:
         if self.val[0] in 'cCsSiI':
             return [int(v) for v in self.val[1:].split(',')]
         elif self.val[0] == 'f':
@@ -253,7 +260,7 @@ class OptionalField(BaseHelper):
         else:
             raise IOError('unknown number array type [{}]'.format(self.val[0]))
 
-    def _id(self):
+    def _id(self) -> str:
         return self.tag
 
 
@@ -261,7 +268,7 @@ class Segment(BaseHelper):
     """
     A Segment record
     """
-    def __init__(self, str_val, skip_seq):
+    def __init__(self, str_val: str, skip_seq: bool) -> None:
         super(Segment, self).__init__(3, _type='S')
 
         tokens = self.split(str_val)
@@ -277,7 +284,7 @@ class Segment(BaseHelper):
 
         self.optionals = self.read_optionals(tokens)
 
-    def _id(self):
+    def _id(self) -> str:
         return self.name
 
 
@@ -285,7 +292,7 @@ class Link(BaseHelper):
     """
     A Link record.
     """
-    def __init__(self, str_val):
+    def __init__(self, str_val: str) -> None:
         super(Link, self).__init__(6, _type='L')
 
         tokens = self.split(str_val)
@@ -302,7 +309,7 @@ class Link(BaseHelper):
 
         self.optionals = self.read_optionals(tokens)
 
-    def _id(self):
+    def _id(self) -> tuple[str, str, str, str]:
         return self.src, self.src_orient, self.dest, self.dest_orient
 
 
@@ -310,7 +317,7 @@ class Containment(BaseHelper):
     """
     A Containment record
     """
-    def __init__(self, str_val):
+    def __init__(self, str_val: str) -> None:
         super(Containment, self).__init__(7, _type='C')
 
         tokens = self.split(str_val)
@@ -328,7 +335,7 @@ class Containment(BaseHelper):
 
         self.optionals = self.read_optionals(tokens)
 
-    def _id(self):
+    def _id(self) -> tuple[str, str, str, str]:
         return self.container, self.container_orient, self.contained, self.contained_orient
 
 
@@ -336,7 +343,7 @@ class Path(BaseHelper):
     """
     A Path record.
     """
-    def __init__(self, str_val):
+    def __init__(self, str_val: str) -> None:
         super(Path, self).__init__(4, _type='P')
 
         tokens = self.split(str_val)
@@ -354,26 +361,26 @@ class Path(BaseHelper):
             for ti in tokens[3].split(','):
                 self.overlaps.append(ti)
 
-    def _id(self):
+    def _id(self) -> str:
         return self.name
 
 
 class GFA(object):
 
-    def to_networkx(self, include_seq=False, annotate_paths=False, collections_to_str=True,
-                    add_label=False, progress=False):
+    def to_networkx(self, include_seq: bool=False, annotate_paths: bool=False, collections_to_str: bool=True,
+                    add_label: bool=False, progress: bool=False) -> nx.MultiGraph:
         """
         Convert the instance of a Networkx DiGraph.
-        :param include_seq: include the segment sequences as node attributes
-        :param annotate_paths: add path membership as node attributes
-        :param collections_to_str: convert attributes which are collections to strings.
-        :param add_label: include segment names also as node attributes (label)
-        :param progress: show progress
-        :return: networkx.DiGraph
+        :param include_seq: Include the segment sequences as node attributes
+        :param annotate_paths: Add path membership as node attributes
+        :param collections_to_str: Convert attributes which are collections to strings.
+        :param add_label: Include segment names also as node attributes (label)
+        :param progress: Show progress
+        :return: A networkx.MultiGraph
         """
         g = nx.MultiGraph()
 
-        # add nodes. We do this first to include unconnected nodes
+        # Add nodes. We do this first to include unconnected nodes
         for si in tqdm.tqdm(self.segments.values(), desc='Creating nodes', disable=not progress):
             attrs = {'length': si.length}
             for k, v in si.optionals.items():
@@ -384,7 +391,7 @@ class GFA(object):
                 attrs['label'] = si.name
             g.add_node(si.name, **attrs)
 
-        # add edges
+        # Add edges
         for li in tqdm.tqdm(self.links.values(), desc='Creating edges', disable=not progress):
             attrs = {
                 'src_orient': li.src_orient,
@@ -394,19 +401,19 @@ class GFA(object):
             g.add_edge(li.src, li.dest, **attrs)
 
         if annotate_paths:
-            # collect all the path steps for each node
+            # Collect all the path steps for each node
             for n, p in enumerate(self.paths):
                 last = len(p.segment_names)
                 for m, (sid, so) in enumerate(p.segment_names):
                     if m == last-1:
-                        # mark the last element so its easy to discern
+                        # mark the last element so it's easy to discern
                         g.nodes[sid].setdefault('paths', []).append('p{}.{}|'.format(n, m))
                     else:
                         g.nodes[sid].setdefault('paths', []).append('p{}.{}'.format(n, m))
 
         if collections_to_str:
-            # stringify collection attributes.
-            # as for instance networkx graphml does not support collections.
+            # Stringify collection attributes.
+            # For instance, networkx graphml does not support collections.
             for n, d in g.nodes(data=True):
                 for k, v in d.items():
                     if not isinstance(v, str) and isinstance(v, Iterable):
@@ -414,10 +421,10 @@ class GFA(object):
 
         return g
 
-    def to_fasta(self, output):
+    def to_fasta(self, output: str | io.StringIO) -> None:
         """
         Write all segments to Fasta
-        :param output: output file name or handle
+        :param output: Output file name or handle
         """
         if isinstance(output, str):
             out_hndl = open(output, 'wt')
@@ -425,25 +432,25 @@ class GFA(object):
             out_hndl = output
 
         try:
-            _nseq = 0
+            num_seq = 0
             for _id, _s in self.segments.items():
                 desc = ' '.join(['{}:{}'.format(_o._id(), _o.get()) for _o in _s.optionals.values()])
                 SeqIO.write(SeqRecord(Seq(_s.seq), id=_id, description=desc), out_hndl, 'fasta')
-                _nseq += 1
-            logger.info('Wrote {} segments'.format(_nseq))
+                num_seq += 1
+            logger.info('Wrote {} segments'.format(num_seq))
 
         finally:
             if isinstance(output, str):
                 out_hndl.close()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return 'Segments: {}, Paths: {}, Links: {}, Containments: {}'.format(
             len(self.segments), len(self.paths), len(self.links), len(self.containments))
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.__repr__()
 
-    def write(self, output):
+    def write(self, output: str|io.StringIO) -> None:
 
         if isinstance(output, str):
             out_hndl = open(output, 'wt')
@@ -459,7 +466,7 @@ class GFA(object):
         # write header
         out_hndl.write('{}\n'.format('\t'.join(['H', str(self.header['VN'])])))
 
-        def to_str(f):
+        def to_str(f) -> str:
             if not f:
                 return '*'
             else:
@@ -503,24 +510,25 @@ class GFA(object):
         # write paths
         for pi in self.paths.values():
 
-            segnames_str = ','.join('{}{}'.format(sni[0], sni[1]) for sni in pi.segment_names)
+            segment_names_str = ','.join('{}{}'.format(sni[0], sni[1]) for sni in pi.segment_names)
 
             if not pi.overlaps:
                 overlap_str = '*'
             else:
                 overlap_str = ','.join(ovi for ovi in pi.overlaps)
 
-            fields = ['P', pi.name, segnames_str, overlap_str]
-            for oi in ci.optionals.values():
+            fields = ['P', pi.name, segment_names_str, overlap_str]
+            for oi in pi.optionals.values():
                 fields.append(str(oi))
             out_hndl.write('{}\n'.format('\t'.join(fields)))
 
-    def __init__(self, filename, ignore_isolate_paths=False, skip_sequence_data=False, progress=False):
+    def __init__(self, filename: str, ignore_isolate_paths: bool=False,
+                 skip_sequence_data: bool=False, progress: bool=False) -> None:
         """
         Instantiate from a file. Only a single GFA record is expected to be found.
-        :param filename: the gfa file to read
-        :param ignore_isolate_paths: some assemblers specify non-compliant, single node paths.
-        :param progress: show progress while reading
+        :param filename: The name of gfa file to read
+        :param ignore_isolate_paths: Some assemblers specify non-compliant, single node paths.
+        :param progress: Show progress while reading
         """
         self.filename = filename
         self.ignore_isolate_paths = ignore_isolate_paths
@@ -541,7 +549,7 @@ class GFA(object):
                     break
 
                 if line.startswith('#'):
-                    # a comment, could possibly read in
+                    # a comment that be could possibly read in
                     self.comments.append(line[1:])
 
                 elif line.startswith('H'):
@@ -558,27 +566,27 @@ class GFA(object):
                             found_ver = True
                             self.version = o.get()
 
-                    # check version? Why bother
+                    # check the version? Why bother
                     if found_ver:
-                        if not re.match('^1[\.0-9]+', self.version):
+                        if not re.match(r'^1[\\.0-9]+', self.version):
                             raise IOError('unsupported GFA version [{}]'.format(self.version))
 
                 elif line.startswith('S'):
-                    s = Segment(line, self.skip_sequence_data)
-                    self.segments[s.name] = s
+                    obj = Segment(line, self.skip_sequence_data)
+                    self.segments[obj.name] = obj
 
                 elif line.startswith('L'):
-                    l = Link(line)
-                    self.links[l] = l
+                    obj = Link(line)
+                    self.links[obj] = obj
 
                 elif line.startswith('C'):
-                    c = Containment(line)
-                    self.containments[c] = c
+                    obj = Containment(line)
+                    self.containments[obj] = obj
 
                 elif line.startswith('P'):
                     try:
-                        p = Path(line)
-                        self.paths[p] = p
+                        obj = Path(line)
+                        self.paths[obj] = obj
                     except MissingFieldsError as e:
                         if not ignore_isolate_paths:
                             raise e

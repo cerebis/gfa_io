@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="gfa_io",
-    version="0.2",
+    version="0.3",
     packages=find_packages("src") ,
     package_dir={"": "src"},
     url="https://github.com/cerebis/gfa_io",

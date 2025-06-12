@@ -1,4 +1,5 @@
 import os
+from Bio import SeqIO
 from tempfile import TemporaryDirectory
 
 import pytest
@@ -39,6 +40,10 @@ def test_to_fasta():
         with open(fasta_out, "w") as f:
             gfa.to_fasta(f)
         assert os.path.exists(fasta_out)
+        seqs = [s for s in SeqIO.parse(fasta_out, "fasta")]
+        assert len(list(seqs)) == len(gfa.segments)
+        for seq in seqs:
+            assert str(seq.seq) == gfa.segments[seq.id].seq
 
 
 def test_find_isolated_segments():

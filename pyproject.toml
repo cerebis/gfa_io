@@ -39,7 +39,7 @@ gfa_utils = "gfa_io.command_line:main"
 
 [dependency-groups]
 docs = ["sphinx"]
-test = ["pytest == 8.3.5"]
+test = ["pytest == 8.3.5", "biopython"]
 lint = ["mypy == 1.16.0", "ruff == 0.11.12"]
 dev = [
     {include-group = "test"},

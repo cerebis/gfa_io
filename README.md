@@ -1,33 +1,60 @@
 # GFA IO module
 
-Currently this module only reads GFA v1 and does not write either v1 or v2.
+Currently this module reads and writes GFA v1
 
 ## Motivations:
-- Python 2.7 support.
+- Python 3.7 support.
 - Provide a simple means of loading GFA files into a standard framework (Networkx).
 - Avoid problematic modules
 
-## Limitations
-- cannot write any GFA format.
-- appears to be resource hungry for large assemblies.
-
 ## Example
 
-There is a small UX included in the module for testing. This will read a GFAv1 file and write GraphML via Networkx. 
-Networkx appears to be a tad hungry when writing this format and there are constraints on what types it is 
-capable of serialising.
+A small utility `gfa_utils` is included in the module, which included the following subcommands.
 
-The following will read a SPADES GFAv1 file and write GraphML, where `--paths` are included as node attributes. Since
-SPADES includes empty (non-compliant) paths in its GFA file, the `--ignore` flag is used to skip over them.
+### update-segments
+Replace sequences in the GFA file with those in a supplied FASTA file. It is expected that the sequence
+records match between the GFA and FASTA file.
+
+One use-case is updating a GFA with post-assembly polished sequences.
+
 ```bash
-> python gfa_io/gfa_io.py --paths --ignore $GFA_IN $GRAPHML_OUT
+gfa_utils update-segments GFA_IN FASTA_IN GFA_OUT
 ```
 
+### isolates
+
+Analyse a GFA file for segments which are network isolates (unattached) and report in CSV format.
+
+Additional simple criteria can be imposed on the result, such as that a segment must refer to itself (circular), min and maximul segment length.
+
+```bash
+gfa_utils isolates GFA_IN ISOLATE_CSV
+```
+
+### dump-segments
+
+Extract the segment sequences in FASTA format.
+
+```bash
+gfa_utils dump-segments GFA_IN FASTA_OUT
+``` 
+
+### convert
+
+The following will read a GFA file and write a corresponding graph using NetworkX. File format can be one of GraphML, GML or an edge list.
+
+```bash
+> python gfa_utils convert -f graphml $GFA_IN $GRAPHML_OUT
+```
+
+
+
 In a piece of code, one can get a networkx.DiGraph in the following manner
+
 ```python
 import gfa_io
 import networkx
- 
+
 # read in the GFA file
 gfa = gfa_io.GFA('assem.gfa', ignore_isolate_paths=True)
 # create a DiGraph()

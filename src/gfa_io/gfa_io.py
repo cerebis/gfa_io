@@ -74,6 +74,9 @@ def find_isolated_segments(gfa_file: str, min_len: int=2000, max_len: Optional[i
 
     logger.debug(f'Graph details: order={g.order()}, size={g.size()}')
 
+    if require_reciprocal:
+        raise RuntimeError('Checking for reciprocal edges is not currently implemented')
+
     suspects = []
     for i, gi in enumerate(nx.connected_components(g)):
 
@@ -427,21 +430,21 @@ class GFA(object):
         :param output: Output file name or handle
         """
         if isinstance(output, str):
-            out_hndl = open(output, 'wt')
+            out_handle = open(output, 'wt')
         else:
-            out_hndl = output
+            out_handle = output
 
         try:
             num_seq = 0
             for _id, _s in self.segments.items():
                 desc = ' '.join(['{}:{}'.format(_o._id(), _o.get()) for _o in _s.optionals.values()])
-                SeqIO.write(SeqRecord(Seq(_s.seq), id=_id, description=desc), out_hndl, 'fasta')
+                SeqIO.write(SeqRecord(Seq(_s.seq), id=_id, description=desc), out_handle, 'fasta')
                 num_seq += 1
             logger.info('Wrote {} segments'.format(num_seq))
 
         finally:
             if isinstance(output, str):
-                out_hndl.close()
+                out_handle.close()
 
     def __repr__(self) -> str:
         return 'Segments: {}, Paths: {}, Links: {}, Containments: {}'.format(
@@ -453,20 +456,22 @@ class GFA(object):
     def write(self, output: str|io.StringIO) -> None:
 
         if isinstance(output, str):
-            out_hndl = open(output, 'wt')
+            out_handle = open(output, 'wt')
         else:
-            out_hndl = output
+            out_handle = output
 
-        logger.debug('Writing GFA to {}'.format(out_hndl.name))
+        logger.debug('Writing GFA to {}'.format(out_handle.name))
 
         # write comments
         for ci in self.comments:
-            out_hndl.write('#{}\n'.format(ci))
+            out_handle.write('#{}\n'.format(ci))
 
         # write header
-        out_hndl.write('{}\n'.format('\t'.join(['H', str(self.header['VN'])])))
+        logger.debug(self.header)
+        if 'VN' in self.header:
+            out_handle.write('{}\n'.format('\t'.join(['H', str(self.header['VN'])])))
 
-        def to_str(f) -> str:
+        def to_str(f:str|int|float|List) -> str:
             if not f:
                 return '*'
             else:
@@ -483,7 +488,7 @@ class GFA(object):
             fields = ['S', si.name, to_str(si.seq)]
             for oi in si.optionals.values():
                 fields.append(str(oi))
-            out_hndl.write('{}\n'.format('\t'.join(fields)))
+            out_handle.write('{}\n'.format('\t'.join(fields)))
 
         # write links
         for li in self.links.values():
@@ -494,7 +499,7 @@ class GFA(object):
                       to_str(li.overlap)]
             for oi in li.optionals.values():
                 fields.append(str(oi))
-            out_hndl.write('{}\n'.format('\t'.join(fields)))
+            out_handle.write('{}\n'.format('\t'.join(fields)))
 
         # write containments
         for ci in self.containments.values():
@@ -505,7 +510,7 @@ class GFA(object):
                       to_str(ci.pos), to_str(ci.overlap)]
             for oi in ci.optionals.values():
                 fields.append(str(oi))
-            out_hndl.write('{}\n'.format('\t'.join(fields)))
+            out_handle.write('{}\n'.format('\t'.join(fields)))
 
         # write paths
         for pi in self.paths.values():
@@ -520,7 +525,23 @@ class GFA(object):
             fields = ['P', pi.name, segment_names_str, overlap_str]
             for oi in pi.optionals.values():
                 fields.append(str(oi))
-            out_hndl.write('{}\n'.format('\t'.join(fields)))
+            out_handle.write('{}\n'.format('\t'.join(fields)))
+
+    def _add_version(self, ver: float=1.0) -> None:
+        logger.debug(f'Adding version to header: {ver}')
+        o = OptionalField(f'VN:Z:{ver}')
+        self.header[o.tag] = o
+
+    def _validate(self) -> None:
+        """
+        Apply some simple validation rules
+        """
+        if 'VN' not in self.header:
+            logger.warning('No version specified in header. Assuming 1.0')
+            self._add_version()
+        elif len(self.header) == 0:
+            logger.warning('No header found in GFA')
+            self._add_version()
 
     def __init__(self, filename: str, ignore_isolate_paths: bool=False,
                  skip_sequence_data: bool=False, progress: bool=False) -> None:
@@ -590,3 +611,5 @@ class GFA(object):
                     except MissingFieldsError as e:
                         if not ignore_isolate_paths:
                             raise e
+
+        self._validate()

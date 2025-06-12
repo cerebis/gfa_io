@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools==80.9.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "gfa_io"
@@ -48,10 +48,14 @@ dev = [
 ]
 
 [tool.setuptools]
+include-package-data = false
 zip-safe = false
 
-[tool.setuptools.packages]
-find = {}
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["gfa_io*"]
+exclude = ["gfa_io.egg-info*", "tests*", "test_data*"]
+namespaces = false
 
 [tool.pytest.ini_options]
 addopts = [

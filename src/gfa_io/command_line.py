@@ -5,7 +5,7 @@ import sys
 import networkx as nx
 import pandas
 
-from gfa_io import gfa_io
+import gfa_io
 
 logger = logging.getLogger(__name__)
 

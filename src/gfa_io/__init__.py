@@ -1,5 +1,6 @@
 from .gfa_io import (
     GFA,
+    BaseHelper,
     Containment,
     Link,
     MissingFieldsError,
@@ -12,6 +13,7 @@ from .gfa_io import (
 
 __all__ = [
     "GFA",
+    "BaseHelper",
     "Containment",
     "Link",
     "MissingFieldsError",

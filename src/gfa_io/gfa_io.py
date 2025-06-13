@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 SegmentInfo = namedtuple('SegmentInfo', ['name', 'length', 'depth'])
 
 
-def update_segments(gfa_file: str, fasta_file: str, output_stream: io.StringIO) -> None:
+def update_segments(gfa_file: str, fasta_file: str, output_stream: io.BufferedWriter) -> None:
     """
     Update the segment sequences using the supplied fasta file. 
 
@@ -34,7 +34,7 @@ def update_segments(gfa_file: str, fasta_file: str, output_stream: io.StringIO) 
     for new_seq in tqdm.tqdm(SeqIO.parse(fasta_file, 'fasta'), desc='Updating nodes'):
 
         if new_seq.id not in gfa.segments:
-            raise RuntimeError('Fasta sequence {} was not found as a segment'.format(new_seq.id))
+            raise KeyError('Fasta sequence {} was not found as a segment'.format(new_seq.id))
 
         si = gfa.segments[new_seq.id]
         si.length = len(new_seq)
@@ -42,7 +42,7 @@ def update_segments(gfa_file: str, fasta_file: str, output_stream: io.StringIO) 
         logger.debug('Updated {}'.format(si.name))
         
         if si.name in changed:
-            raise RuntimeError('Duplicate fasta entries for segment {}'.format(si.name))
+            raise ValueError('Duplicate fasta entries for segment {}'.format(si.name))
         changed.add(si.name)
 
     logger.info('Updated {} of {} segments'.format(len(changed), len(gfa.segments)))
@@ -75,7 +75,7 @@ def find_isolated_segments(gfa_file: str, min_len: int=2000, max_len: Optional[i
     logger.debug(f'Graph details: order={g.order()}, size={g.size()}')
 
     if require_reciprocal:
-        raise RuntimeError('Checking for reciprocal edges is not currently implemented')
+        raise NotImplementedError('Checking for reciprocal edges is not currently implemented')
 
     suspects = []
     for i, gi in enumerate(nx.connected_components(g)):
@@ -144,7 +144,7 @@ class BaseHelper(ABC):
 
     @abstractmethod
     def _id(self) -> Hashable:
-        raise RuntimeError('_id() has not been implemented')
+        raise NotImplementedError('_id() has not been implemented')
 
     def __repr__(self) -> str:
         o = self._id()
@@ -196,7 +196,8 @@ class BaseHelper(ABC):
         if len(fields) > self.min_fields:
             for fi in fields[self.min_fields:]:
                 o = OptionalField(fi)
-                assert o not in optionals, 'optional fields with duplicate tag {}'.format(o.tag)
+                if o.tag in optionals:
+                    raise KeyError(f'optional fields with duplicate tag {o.tag}')
                 optionals[o.tag] = o
         return optionals
 
@@ -235,13 +236,13 @@ class OptionalField(BaseHelper):
         elif self.type == 'B':
             self.get = self.get_numarray
         else:
-            raise IOError('unknown field type [{}] on line [{}]'.format(self.type, str_val))
+            raise ValueError('unknown field type [{}] on line [{}]'.format(self.type, str_val))
 
     def __str__(self) -> str:
         if self.type in 'AZJif':
             return f'{self.tag}:{self.type}:{self.val}'
         else:
-            raise RuntimeError('Writing byte or num arrays (types H or B) is not implemented')
+            raise NotImplementedError('Writing byte or num arrays (types H or B) is not implemented')
 
     def get_int(self) -> int:
         return int(self.val)
@@ -257,11 +258,11 @@ class OptionalField(BaseHelper):
 
     def get_numarray(self) -> List[int|float]:
         if self.val[0] in 'cCsSiI':
-            return [int(v) for v in self.val[1:].split(',')]
+            return [int(v) for v in self.val[1:].split(',') if v]
         elif self.val[0] == 'f':
-            return [float(v) for v in self.val[1:].split(',')]
+            return [float(v) for v in self.val[1:].split(',') if v]
         else:
-            raise IOError('unknown number array type [{}]'.format(self.val[0]))
+            raise ValueError('unknown number array type [{}]'.format(self.val[0]))
 
     def _id(self) -> str:
         return self.tag
@@ -424,7 +425,7 @@ class GFA(object):
 
         return g
 
-    def to_fasta(self, output: str | io.StringIO) -> None:
+    def to_fasta(self, output: str | io.BufferedWriter) -> None:
         """
         Write all segments to Fasta
         :param output: Output file name or handle
@@ -453,7 +454,7 @@ class GFA(object):
     def __str__(self) -> str:
         return self.__repr__()
 
-    def write(self, output: str|io.StringIO) -> None:
+    def write(self, output: str|io.BufferedWriter) -> None:
 
         if isinstance(output, str):
             out_handle = open(output, 'wt')
@@ -560,6 +561,7 @@ class GFA(object):
         self.links = OrderedDict()
         self.containments = OrderedDict()
         self.paths = OrderedDict()
+        self.version = '{unset}'
 
         with open_input(filename) as input_h:
 

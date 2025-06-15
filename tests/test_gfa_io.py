@@ -174,7 +174,7 @@ def test_update_segments_segment_not_found(tmp_path: pathlib.Path) -> None:
         update_segments(str(gfa_file), str(fasta_file), output_stream)
 
 
-# Test case for a write failure
+# Test case for writing failure
 def test_update_segments_write_fails(tmp_path: pathlib.Path) -> None:
     """Tests the behavior when writing the output fails."""
     gfa_content = "H\tVN:Z:1.0\nS\t1\t*\n"
@@ -279,7 +279,9 @@ def test_optional_field_unknown_type_raises_error() -> None:
         ("T9:B:f,1.1,2.2,-3.3", [1.1, 2.2, -3.3], list),
     ],
 )
-def test_optional_field_handles_known_types_correctly(field_str: str, expected_value, expected_type) -> None:
+def test_optional_field_handles_known_types_correctly(field_str: str,
+                                                      expected_value,
+                                                      expected_type) -> None:
     """
     Tests that OptionalField correctly parses and returns values for all
     supported data types.

@@ -1,8 +1,8 @@
 import bz2
 import gzip
-import io
 import logging
 import re
+import typing
 from abc import ABC, abstractmethod
 from collections import OrderedDict, namedtuple
 from collections.abc import Iterable
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 SegmentInfo = namedtuple('SegmentInfo', ['name', 'length', 'depth'])
 
 
-def update_segments(gfa_file: str, fasta_file: str, output_stream: io.BufferedWriter) -> None:
+def update_segments(gfa_file: str, fasta_file: str, output_stream: typing.TextIO) -> None:
     """
     Update the segment sequences using the supplied fasta file. 
 
@@ -371,8 +371,12 @@ class Path(BaseHelper):
 
 class GFA(object):
 
-    def to_networkx(self, include_seq: bool=False, annotate_paths: bool=False, collections_to_str: bool=True,
-                    add_label: bool=False, progress: bool=False) -> nx.MultiGraph:
+    def to_networkx(self,
+                    include_seq: bool=False,
+                    annotate_paths: bool=False,
+                    collections_to_str: bool=True,
+                    add_label: bool=False,
+                    progress: bool=False) -> nx.MultiGraph:
         """
         Convert the instance of a Networkx DiGraph.
         :param include_seq: Include the segment sequences as node attributes
@@ -425,7 +429,7 @@ class GFA(object):
 
         return g
 
-    def to_fasta(self, output: str | io.BufferedWriter) -> None:
+    def to_fasta(self, output: str | typing.TextIO) -> None:
         """
         Write all segments to Fasta
         :param output: Output file name or handle
@@ -454,7 +458,7 @@ class GFA(object):
     def __str__(self) -> str:
         return self.__repr__()
 
-    def write(self, output: str|io.BufferedWriter) -> None:
+    def write(self, output: str | typing.TextIO) -> None:
 
         if isinstance(output, str):
             out_handle = open(output, 'wt')
@@ -544,8 +548,11 @@ class GFA(object):
             logger.warning('No header found in GFA')
             self._add_version()
 
-    def __init__(self, filename: str, ignore_isolate_paths: bool=False,
-                 skip_sequence_data: bool=False, progress: bool=False) -> None:
+    def __init__(self,
+                 filename: str,
+                 ignore_isolate_paths: bool=False,
+                 skip_sequence_data: bool=False,
+                 progress: bool=False) -> None:
         """
         Instantiate from a file. Only a single GFA record is expected to be found.
         :param filename: The name of gfa file to read

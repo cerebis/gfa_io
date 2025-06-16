@@ -21,13 +21,35 @@ SegmentInfo = namedtuple('SegmentInfo', ['name', 'length', 'depth'])
 
 def update_segments(gfa_file: str, fasta_file: str, output_stream: typing.TextIO) -> None:
     """
-    Update the segment sequences using the supplied fasta file. 
+    Updates segments in a GFA file with sequences from a FASTA file.
 
-    :param gfa_file: Input gfa to update
-    :param fasta_file: Input fasta for to use as sequence source
-    :param output_stream: Output stream for an updated gfa file
+    This function reads a GFA file and updates the segment sequences and their
+    lengths based on the corresponding sequences in the provided FASTA file.
+    The GFA file is parsed, segments are updated if matches are found in the
+    FASTA file, and the updated GFA data is written to the output stream.
+    Segments in the FASTA file that are not found in the GFA file result in
+    a KeyError. If duplicate segment entries are found in the FASTA file, a
+    ValueError is raised. Progress of the updates is displayed, and logs are
+    generated for each updated segment and summary.
+
+    Parameters:
+        gfa_file: str
+            Path to the input GFA file.
+        fasta_file: str
+            Path to the input FASTA file containing updated sequences.
+        output_stream: TextIO
+            Stream to write the updated GFA content.
+
+    Raises:
+        KeyError:
+            If a sequence ID in the FASTA file is not found as a segment in
+            the GFA file.
+        ValueError:
+            If duplicate segment entries are present in the FASTA file.
+
+    Returns:
+        None
     """
-
     gfa = GFA(gfa_file, skip_sequence_data=False, progress=True)
 
     changed = set()
@@ -56,19 +78,20 @@ def find_isolated_segments(gfa_file: str, min_len: int=2000, max_len: Optional[i
     Check a GFA file for putative circular, isolated segments. The test for circularity is simply
     the existence of a self-loop.
 
-    Reciprocal edges is a strong constraint, leading to the removal of many edges. This may or may
-    not lead to a substantial increase of false positives relative to any increase in true positives.
+    Reciprocal edges is an additional constraint that impacts the strength of filtering and affects
+    the identification of suspected segments. If reciprocal edges are required, the method excludes
+    non-reciprocal edges during graph construction.
 
-    :param gfa_file: The filename of the GFA.
-    :param min_len: Minimum length below which segments are ignored.
-    :param max_len: Maximum length above which segments are ignored.
-    :param require_circular: Requires self-loop indicating circular.
-    :param require_reciprocal: In conversion of the GFA to an undirected graph, require that there be
-    reciprocal edges between u and v. i.e. (u,v) and (v,u). If not true, then no edge is added to
-    the undirected graph.
-    :return: A list of suspected circular isolated segments.
+    Parameters:
+    gfa_file: Filename of the GFA file to analyze.
+    min_len: Minimum segment length to consider, below which segments are ignored.
+    max_len: Maximum segment length to consider, above which segments are ignored.
+    require_circular: Boolean indicator for requiring a self-loop as evidence of circularity.
+    require_reciprocal: Boolean indicator for requiring reciprocal edges in the graph.
+
+    Returns:
+    List of SegmentInfo objects describing the suspected circular isolated segments.
     """
-
     g = GFA(gfa_file, skip_sequence_data=True, progress=True)\
         .to_networkx(include_seq=False, progress=True)
 
@@ -106,13 +129,23 @@ def find_isolated_segments(gfa_file: str, min_len: int=2000, max_len: Optional[i
 
 def open_input(filename: str) -> TextIO:
     """
-    Open a text file for input. Only the ends of filenames are inspected to determine
-    if the stream requires decompression, rather than reading the start of file.
+    Opens a file based on its compression type for reading as text. Supports
+    plain text files, as well as files compressed in bz2 and gzip formats.
 
-    Recognises gzip and bz2.
+    Parameters:
+        filename: str
+            The path to the file to be opened. File extension determines
+            if decompression is needed.
 
-    :param filename: The name of the input file.
-    :return: An open file handle, possibly wrapped in a decompressor.
+    Returns:
+        TextIO
+            A file object opened in text mode, allowing for reading operations.
+
+    Raises:
+        FileNotFoundError
+            If the file specified by the filename does not exist.
+        OSError
+            If there is an issue opening the file or handling the compression format.
     """
     suffix = filename.split('.')[-1].lower()
     if suffix == 'bz2':
@@ -125,17 +158,47 @@ def open_input(filename: str) -> TextIO:
 
 class MissingFieldsError(IOError):
     """
-    Thrown records of fewer fields that expected by the spec.
+    Indicates that a record contains fewer fields than expected by the specification.
+
+    This exception is used to notify situations where the number of
+    delimited fields in a record does not meet the minimum required count
+    specified in the provided arguments. It encapsulates both the expected
+    number of fields and the problematic record for diagnostic purposes.
+
+    Attributes:
+        min_fields: int
+            The minimum number of fields expected in the record.
+        sep: str
+            The string delimiter used to split the record into fields.
+        str_val: str
+            The problematic record that caused the exception.
     """
     def __init__(self, min_fields: int, sep: str, str_val: str) -> None:
         super(MissingFieldsError, self).__init__(
             'less than {} fields delimited by "{}" were found for record: {}'.format(
                 min_fields, sep, str_val))
+        self.min_fields = min_fields
+        self.sep = sep
+        self.str_val = str_val
 
 
 class BaseHelper(ABC):
     """
-    A simple base, which simply removes the initial common task of parsing.
+    An abstract base class for handling common parsing tasks.
+
+    This class provides basic functionality to manage delimited string
+    records, ensure a minimum number of required fields, and handle
+    optional fields. It serves as a base for implementing more specific
+    parsing logic in subclasses.
+
+    Attributes
+    ----------
+    _type : Optional[str]
+        An optional field to specify the type of the record.
+    min_fields : int
+        The minimum number of required fields in the record.
+    sep : str
+        The delimiter used to split fields in the record string.
     """
     def __init__(self, min_fields: int, _type: Optional[str]=None, sep: str='\t') -> None:
         self._type = _type
@@ -144,6 +207,19 @@ class BaseHelper(ABC):
 
     @abstractmethod
     def _id(self) -> Hashable:
+        """
+        Defines an abstract method `_id`. This method must be implemented in any subclass.
+        It enforces providing a unique identifier for the implementing class.
+
+        Methods:
+            _id: Abstract method that should return a hashable value unique to the implementing class.
+
+        Raises:
+            NotImplementedError: If the `_id` method is not implemented in the subclass.
+
+        Returns:
+            Hashable: A unique identifier specific to an instance of the implementing class.
+        """
         raise NotImplementedError('_id() has not been implemented')
 
     def __repr__(self) -> str:
@@ -170,9 +246,21 @@ class BaseHelper(ABC):
 
     def split(self, str_val: str) -> List[str]:
         """
-        Split the delimited string representation into fields.
-        :param str_val: A string representation of a record
-        :return: An array of fields
+        Split the delimited string into fields while performing basic validation
+        of the string format and content.
+
+        Checks include ensuring the string is not empty or contains only whitespace,
+        and verifying that the resulting fields meet the required minimum count.
+
+        :param str_val: A string representation of a record.
+        :type str_val: str
+
+        :raises IOError: If the input string is empty or contains only whitespace.
+        :raises MissingFieldsError: If the number of fields after splitting is less than
+            the minimum required.
+
+        :return: A list of fields obtained by splitting the input string based on the separator.
+        :rtype: List[str]
         """
         str_val = str_val.strip()
         if not str_val:
@@ -186,11 +274,18 @@ class BaseHelper(ABC):
 
     def read_optionals(self, fields: List[str]) -> dict:
         """
-        If a record has optional fields, beyond what are required, these will be read
-        into a dictionary, keyed by their tags. Therefore, it is assumed that tags are
-        unique within each record.
-        :param fields: The array of fields for a given record
-        :return: A dict of OptionalField objects
+        If a record contains additional optional fields beyond the required ones, these fields
+        are processed and returned as a dictionary, where each entry is keyed by its unique tag.
+
+        Parameters:
+        fields (List[str]): A list of strings representing the fields of a record.
+
+        Returns:
+        dict: A dictionary where each key corresponds to the unique tag of an optional field
+              and the value is an OptionalField object.
+
+        Raises:
+        KeyError: If there are multiple optional fields with the same tag in the given record.
         """
         optionals = OrderedDict()
         if len(fields) > self.min_fields:
@@ -204,9 +299,24 @@ class BaseHelper(ABC):
 
 class OptionalField(BaseHelper):
     """
-    A catch-all object for optional fields. As these fields declare their
-    value type. This is taken into account when returning it with .get(), but
-    only one type of int is returned.
+    Represents a specialized field object for optional data fields tagged with a specific format.
+
+    The OptionalField class is intended as a utility to parse, handle, and retrieve values associated
+    with optional fields in a specified format. It validates the tag format, identifies the type of
+    field, and provides the means to extract data in the appropriate type. Multiple field value types
+    are supported, including string, integer, float, bytearray, and numeric arrays. Instances of this
+    class also allow easy conversion back to the original string representation.
+
+    Attributes:
+        tag (str): The identifier for the field, adhering to naming specification rules.
+        type (str): The single-character type descriptor of the field.
+        val (str): The value part of the field as a raw string.
+
+    Raises:
+        IOError: If the field tag fails to meet the specified naming rules.
+        ValueError: If an unsupported or unknown field type is encountered during initialization.
+        NotImplementedError: If attempting to convert byte arrays or numeric arrays (types H or B)
+            back to string representation.
     """
     def __init__(self, str_val: str) -> None:
         super(OptionalField, self).__init__(3, sep=':')
@@ -270,7 +380,22 @@ class OptionalField(BaseHelper):
 
 class Segment(BaseHelper):
     """
-    A Segment record
+    Represents a Segment record (S) in GFA1 and GFA2.
+
+    This class is used to manage and store information about a biological
+    sequence segment. It provides functionality to parse a string
+    representation of the segment, extracting its name, sequence, and
+    metadata, and optionally skipping sequence extraction.
+
+    Attributes:
+        name (str): The name of the segment extracted from the input string.
+        seq (Optional[str]): The sequence of the segment, which may be None
+            if skipping sequence extraction or if the sequence is marked as
+            a dummy sequence ('*').
+        length (int): The length of the sequence. It is set to 0 if the
+            sequence is not provided or is marked as dummy.
+        optionals (dict): A dictionary containing optional attributes
+            extracted from the input string.
     """
     def __init__(self, str_val: str, skip_seq: bool) -> None:
         super(Segment, self).__init__(3, _type='S')
@@ -294,7 +419,12 @@ class Segment(BaseHelper):
 
 class Link(BaseHelper):
     """
-    A Link record.
+    Represents a Link record.
+
+    This class is used to handle and process a GFA Link (L) record, performing
+    initialization and providing a mechanism to retrieve an identifier tuple
+    that uniquely represents the link. It includes fields for source, destination,
+    orientations, overlaps, and optional attributes.
     """
     def __init__(self, str_val: str) -> None:
         super(Link, self).__init__(6, _type='L')
@@ -319,7 +449,23 @@ class Link(BaseHelper):
 
 class Containment(BaseHelper):
     """
-    A Containment record
+    A Containment record (C) in GFA2.
+
+    Represents a containment record in the GFA2 format, encapsulating details
+    about the contained element and its relationship with the container element.
+    Provides functionality for initialization, parsing, and extracting optional
+    fields and identifiers.
+
+    Attributes:
+        container: The identifier of the container element.
+        container_orient: Orientation of the container element.
+        contained: The identifier of the contained element.
+        contained_orient: Orientation of the contained element.
+        pos: An integer representing the position of the containment.
+        overlap: String representing the overlap information unless set to
+            a dummy entry ('*').
+        optionals: A dictionary storing any additional optional fields
+            from the record.
     """
     def __init__(self, str_val: str) -> None:
         super(Containment, self).__init__(7, _type='C')
@@ -345,7 +491,18 @@ class Containment(BaseHelper):
 
 class Path(BaseHelper):
     """
-    A Path record.
+    A representation of a Path record (P) in the GFA format.
+
+    This class is designed to parse and represent the information contained
+    within a Path record in the GFA (Graphical Fragment Assembly) format.
+    A Path record denotes a sequence of segments within a graph, including
+    their orientations (forward or reverse) and overlaps between adjacent
+    segments.
+
+    The class provides attributes to access the name of the path, the sequence
+    of segment names along with their orientations, and the overlaps between
+    consecutive segments. It extends the functionality of its parent class
+    BaseHelper with specific processing for Path records.
     """
     def __init__(self, str_val: str) -> None:
         super(Path, self).__init__(4, _type='P')
@@ -370,6 +527,35 @@ class Path(BaseHelper):
 
 
 class GFA(object):
+    """
+    Provides functionality for working with GFA (Graphical Fragment Assembly) data.
+
+    The GFA class represents a graphical fragment assembly structure often used in
+    bioinformatics for representing sequences and their relationships in a graph format.
+    It facilitates the conversion of GFA entities into other formats, such as NetworkX
+    MultiGraphs and FASTA, as well as writing GFA data to files in a standardized way.
+    The class supports various operations for handling nodes, edges, paths, and metadata
+    within the GFA.
+
+    Attributes:
+        comments: List[str]
+            A list of comments or metadata that are included at the beginning of the GFA data.
+        header: Dict
+            Dictionary containing GFA header information, such as version number ('VN').
+        segments: Dict
+            Represents segment entries, where each key is a segment name and its value is an
+            object containing sequence information and optional attributes.
+        links: Dict
+            Stores link objects describing connections between segments. Each link specifies
+            source/destination orientations, overlap information, and can include additional
+            attributes.
+        containments: Dict
+            Defines containment relationships between segments. Each containment specifies
+            involved segments, orientations, positions, and optional attributes.
+        paths: Dict
+            Holds paths through the assembly graph. Each path associates segment names, overlaps,
+            and other optional attributes.
+    """
 
     def to_networkx(self,
                     include_seq: bool=False,
@@ -378,13 +564,29 @@ class GFA(object):
                     add_label: bool=False,
                     progress: bool=False) -> nx.MultiGraph:
         """
-        Convert the instance of a Networkx DiGraph.
-        :param include_seq: Include the segment sequences as node attributes
-        :param annotate_paths: Add path membership as node attributes
-        :param collections_to_str: Convert attributes which are collections to strings.
-        :param add_label: Include segment names also as node attributes (label)
-        :param progress: Show progress
-        :return: A networkx.MultiGraph
+        Converts the instance into a NetworkX MultiGraph.
+
+        This method generates a MultiGraph representation using the NetworkX library.
+        The graph can include node sequences, labeled nodes, annotated paths, and collection
+        attributes converted into strings based on the provided options. This representation
+        serves as a useful format for graph-based computations or visualizations.
+
+        Parameters:
+            include_seq: bool
+                If True, node sequences will be included as attributes in the graph.
+            annotate_paths: bool
+                If True, paths through the graph will be annotated on the nodes.
+            collections_to_str: bool
+                If True, collection attributes will be converted into strings to ensure
+                compatibility with graph serialization formats like GraphML.
+            add_label: bool
+                If True, labels will be added to the nodes in the graph.
+            progress: bool
+                If True, progress bars will be displayed during node and edge creation.
+
+        Returns:
+            nx.MultiGraph
+                A NetworkX MultiGraph representing the instance.
         """
         g = nx.MultiGraph()
 
@@ -431,8 +633,19 @@ class GFA(object):
 
     def to_fasta(self, output: str | typing.TextIO) -> None:
         """
-        Write all segments to Fasta
-        :param output: Output file name or handle
+        Writes sequence data to a file or file-like object in FASTA format.
+
+        Writes the segments contained in the object to the specified output in the FASTA format,
+        including optional descriptive fields for each sequence. This method ensures proper
+        handling of file objects and logs the number of sequences written for auditing purposes.
+
+        Arguments:
+            output: str | typing.TextIO
+                The path to the file or a file-like object where the FASTA-formatted data will be written.
+                If a string is provided, it is treated as a file path that will be opened and written to.
+
+        Returns:
+            None
         """
         if isinstance(output, str):
             out_handle = open(output, 'wt')
@@ -459,7 +672,21 @@ class GFA(object):
         return self.__repr__()
 
     def write(self, output: str | typing.TextIO) -> None:
+        """
+        Writes the GFA (Graphical Fragment Assembly) structure data to a specified output. The output
+        can be either a file path or a TextIO stream. This function serializes the different components
+        of the GFA structure, such as comments, headers, segments, links, containments, and paths,
+        into the GFA format before writing them to the output.
 
+        Arguments:
+            output: str | typing.TextIO
+                The target output where the GFA data will be written. If a string is provided, it is
+                treated as a file path where the data will be saved. If a TextIO stream is provided,
+                the data will be written directly to the stream.
+
+        Raises:
+            None
+        """
         if isinstance(output, str):
             out_handle = open(output, 'wt')
         else:
